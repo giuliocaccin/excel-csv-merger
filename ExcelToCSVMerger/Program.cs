@@ -28,19 +28,14 @@ namespace ExcelToCSVMerger
         {
             var sheetConfiguration = new[]
             {
-//                new SheetConfiguration
-//                {
-//                    SheetNameMatch = "Key Metrics",
-//                    StartingPoint = (0, 2)
-//                },
-//                new SheetConfiguration
-//                {
-//                    SheetNameMatch = "Daily",
-//                    StartingPoint = (1, 1)
-//                },
                 new SheetConfiguration
                 {
-                    SheetNameMatch = "Daily Check-Ins by Country",
+                    SheetNameMatch = "Key Metrics",
+                    StartingPoint = (0, 2)
+                },
+                new SheetConfiguration
+                {
+                    SheetNameMatch = "Daily",
                     StartingPoint = (1, 1)
                 }
             };
