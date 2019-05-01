@@ -20,6 +20,7 @@ namespace facebookParser
 
             FileMerger(pathToExcels);
 
+            Console.WriteLine("end");
             Console.ReadLine();
         }
 
@@ -27,14 +28,19 @@ namespace facebookParser
         {
             var sheetConfiguration = new[]
             {
+//                new SheetConfiguration
+//                {
+//                    SheetNameMatch = "Key Metrics",
+//                    StartingPoint = (0, 2)
+//                },
+//                new SheetConfiguration
+//                {
+//                    SheetNameMatch = "Daily",
+//                    StartingPoint = (1, 1)
+//                },
                 new SheetConfiguration
                 {
-                    SheetNameMatch = "Key Metrics",
-                    StartingPoint = (0, 2)
-                },
-                new SheetConfiguration
-                {
-                    SheetNameMatch = "Daily",
+                    SheetNameMatch = "Daily Check-Ins by Country",
                     StartingPoint = (1, 1)
                 }
             };
@@ -106,7 +112,7 @@ namespace facebookParser
             (Name: dataTable.TableName,
                 Content: dataTable.AsEnumerable()
                     .Aggregate(
-                        new StringBuilder(string.Join(",", dataTable.Columns.Cast<DataColumn>().Select(column => $"\"{column.ColumnName}\""))),
+                        new StringBuilder(string.Join(",", dataTable.Columns.Cast<DataColumn>().Select(column => $"\"{column.ColumnName}\""))+Environment.NewLine),
                         (builder, row) =>
                         {
                             builder.AppendLine(string.Join(",", row.ItemArray.Select(item => $"\"{item}\"")));
