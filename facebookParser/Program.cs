@@ -63,11 +63,13 @@ namespace facebookParser
         private static DataTable MergeIntoDataTable((String Name, SheetConfiguration Configuration, string[] Files) configuration)
         {
             var (name, sheetConfiguration, files) = configuration;
+            const string firstColumnName = "fileName";
             var target = new DataTable(name);
-            target.Columns.Add("fileName");
+            target.Columns.Add(firstColumnName);
             foreach (var path in files)
             {
-                using (var stream = File.OpenRead(path))
+                var file = new FileInfo(path);
+                using (var stream = file.OpenRead())
                 using (var reader = ExcelReaderFactory.CreateReader(stream))
                 using (var dataSet = reader.AsDataSet())
                 using (var source = dataSet.Tables[name])
@@ -83,7 +85,7 @@ namespace facebookParser
                     foreach (var sourceRow in source.AsEnumerable().Skip(sheetConfiguration.StartingPoint.Y))
                     {
                         var newTargetRow = target.NewRow();
-                        newTargetRow.SetField("fileName", path);
+                        newTargetRow.SetField(firstColumnName, file.Name);
                         foreach (var sourceColumn in source.Columns.Cast<DataColumn>().Skip(sheetConfiguration.StartingPoint.X))
                         {
                             var sourceColumnName = source.Rows[0].ItemArray[sourceColumn.Ordinal].ToString();
