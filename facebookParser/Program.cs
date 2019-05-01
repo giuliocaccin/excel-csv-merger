@@ -6,7 +6,7 @@ using System.Linq;
 using System.Text;
 using ExcelDataReader;
 
-namespace facebookParser
+namespace ExcelToCSVMerger
 {
     class Program
     {
