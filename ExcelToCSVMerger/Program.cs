@@ -14,7 +14,7 @@ namespace ExcelToCSVMerger
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-            var pathToExcels = "c:\\Users\\GCATBV\\Downloads\\testdata\\";
+            var pathToExcels = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\testdata\\";
 
 //            SheetAnalysis(pathToExcels);
 
@@ -35,7 +35,7 @@ namespace ExcelToCSVMerger
                 },
                 new SheetConfiguration
                 {
-                    SheetNameMatch = "Daily",
+                    SheetNameMatch = "Lifetime Likes By Country",
                     StartingPoint = (1, 1)
                 }
             };
