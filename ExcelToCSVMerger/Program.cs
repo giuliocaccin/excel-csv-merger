@@ -10,11 +10,13 @@ namespace ExcelToCSVMerger
 {
     class Program
     {
+        static HashSet<string> formats = new HashSet<string>();
+
         static void Main(string[] args)
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-            var pathToExcels = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\trs-english\\";
+            var pathToExcels = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\trs-english\\posts\\";
 
             //SheetAnalysis(pathToExcels);
 
@@ -29,12 +31,12 @@ namespace ExcelToCSVMerger
             var sheetConfiguration = new[]
             {
                 new WorksheetConfiguration(
-                    "Key Metrics",
+                    "Reach",
                     (0, 2),
                     ColumnUnivocity.Index
                 ),
                 new WorksheetConfiguration(
-                    "Lifetime Likes By Country",
+                    "Actions On Post",
                     (1, 1),
                     ColumnUnivocity.Title
                 )
@@ -52,13 +54,13 @@ namespace ExcelToCSVMerger
                     Configuration: sheetConfiguration.Single(configuration => grouping.Key.Contains(configuration.SheetNameMatch)),
                     Files: grouping.Select(sheet => sheet.Origin).ToArray()))
                 .Select(tuple => MergeIntoDataTable(tuple.Name, tuple.Configuration, tuple.Files))
-                .Select(DataTableToCsv)
+                .Select(table => DataTableToCsv(pathToExcels, table))
                 .ToArray();
 
-            foreach (var (name, content) in newFiles)
-            {
-                File.WriteAllText($"{pathToExcels}{name}.csv", content, Encoding.UTF8);
-            }
+            foreach (var fileName in newFiles)
+                Console.WriteLine($"Saved [{fileName}]");
+
+            Console.WriteLine(string.Join(Environment.NewLine, formats));
         }
 
         private static DataTable MergeIntoDataTable(String name, WorksheetConfiguration configuration, FileInfo[] files)
@@ -92,7 +94,26 @@ namespace ExcelToCSVMerger
                             var newTargetRow = target.NewRow();
                             newTargetRow.SetField(firstColumnName, file.Name);
                             foreach (var titleAndIndex in titleAndIndexList)
-                                newTargetRow.SetField(configuration.GetColumnName(titleAndIndex), source.Cells[rowIndex + 1, titleAndIndex.Index + 1].Text);
+                            {
+                                var sourceCell = source.Cells[rowIndex + 1, titleAndIndex.Index + 1];
+                                object finalValue;
+                                switch (sourceCell.Style.Numberformat.Format)
+                                {
+                                    case "General":
+                                        finalValue = sourceCell.Text;
+                                        break;
+                                    case "0":
+                                        finalValue = Convert.ToInt32(sourceCell.Value);
+                                        break;
+                                    default:
+                                        finalValue = DateTime.FromOADate((double)sourceCell.Value);
+                                        break;
+                                }
+
+                                newTargetRow[configuration.GetColumnName(titleAndIndex)] = finalValue;
+                                formats.Add(sourceCell.Style.Numberformat.Format);
+                            }
+
                             return newTargetRow;
                         })
                         .ToArray();
@@ -109,17 +130,16 @@ namespace ExcelToCSVMerger
             return target;
         }
 
-        private static (string Name, string Content) DataTableToCsv(DataTable dataTable) =>
-            (Name: dataTable.TableName,
-                Content: dataTable.AsEnumerable()
-                    .Aggregate(
-                        new StringBuilder(string.Join(",", dataTable.Columns.Cast<DataColumn>().Select(column => $"\"{column.ColumnName}\"")) + Environment.NewLine),
-                        (builder, row) =>
-                        {
-                            builder.AppendLine(string.Join(",", row.ItemArray.Select(item => $"\"{item}\"")));
-                            return builder;
-                        })
-                    .ToString());
+        private static string DataTableToCsv(string savePath, DataTable dataTable)
+        {
+            using (var excelPackage = new ExcelPackage(new FileInfo(Path.Combine(savePath, dataTable.TableName + ".xlsx"))))
+            using (var excelWorksheet = excelPackage.Workbook.Worksheets.Add(dataTable.TableName))
+            {
+                excelWorksheet.Cells.LoadFromDataTable(dataTable, true);
+                excelPackage.Save();
+                return excelPackage.File.FullName;
+            }
+        }
 
         private static void SheetAnalysis(string pathToExcels)
         {
