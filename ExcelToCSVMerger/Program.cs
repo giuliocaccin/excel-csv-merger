@@ -4,7 +4,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text;
-using ExcelDataReader;
+using OfficeOpenXml;
 
 namespace ExcelToCSVMerger
 {
@@ -14,9 +14,9 @@ namespace ExcelToCSVMerger
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-            var pathToExcels = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\testdata\\";
+            var pathToExcels = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\trs-english\\";
 
-//            SheetAnalysis(pathToExcels);
+            //SheetAnalysis(pathToExcels);
 
             FileMerger(pathToExcels);
 
@@ -28,30 +28,30 @@ namespace ExcelToCSVMerger
         {
             var sheetConfiguration = new[]
             {
-                new SheetConfiguration
-                {
-                    SheetNameMatch = "Key Metrics",
-                    StartingPoint = (0, 2)
-                },
-                new SheetConfiguration
-                {
-                    SheetNameMatch = "Lifetime Likes By Country",
-                    StartingPoint = (1, 1)
-                }
+                new WorksheetConfiguration(
+                    "Key Metrics",
+                    (0, 2),
+                    ColumnUnivocity.Index
+                ),
+                new WorksheetConfiguration(
+                    "Lifetime Likes By Country",
+                    (1, 1),
+                    ColumnUnivocity.Title
+                )
             };
 
-            var sheetNamesMatch = sheetConfiguration.Select(configuration => configuration.SheetNameMatch).ToArray();
+            var validWorksheetNames = sheetConfiguration.Select(configuration => configuration.SheetNameMatch).ToArray();
 
             var newFiles = new DirectoryInfo(pathToExcels)
                 .GetFiles("*.xlsx")
-                .SelectMany(ExtractSheet)
-                .Where(sheet => sheetNamesMatch.Any(_ => sheet.Name.Contains(_, StringComparison.OrdinalIgnoreCase)))
+                .SelectMany(ExtractWorksheetsFromFile)
+                .Where(sheet => validWorksheetNames.Any(name => sheet.Name.Contains(name, StringComparison.OrdinalIgnoreCase)))
                 .GroupBy(sheet => sheet.Name)
                 .Select(grouping => (
                     Name: grouping.Key,
                     Configuration: sheetConfiguration.Single(configuration => grouping.Key.Contains(configuration.SheetNameMatch)),
-                    Files: grouping.Select(sheet => sheet.FileName).ToArray()))
-                .Select(MergeIntoDataTable)
+                    Files: grouping.Select(sheet => sheet.Origin).ToArray()))
+                .Select(tuple => MergeIntoDataTable(tuple.Name, tuple.Configuration, tuple.Files))
                 .Select(DataTableToCsv)
                 .ToArray();
 
@@ -61,39 +61,45 @@ namespace ExcelToCSVMerger
             }
         }
 
-        private static DataTable MergeIntoDataTable((String Name, SheetConfiguration Configuration, string[] Files) configuration)
+        private static DataTable MergeIntoDataTable(String name, WorksheetConfiguration configuration, FileInfo[] files)
         {
-            var (name, sheetConfiguration, files) = configuration;
             const string firstColumnName = "fileName";
             var target = new DataTable(name);
             target.Columns.Add(firstColumnName);
-            foreach (var path in files)
+            foreach (var file in files)
             {
-                var file = new FileInfo(path);
-                using (var stream = file.OpenRead())
-                using (var reader = ExcelReaderFactory.CreateReader(stream))
-                using (var dataSet = reader.AsDataSet())
-                using (var source = dataSet.Tables[name])
+                using (var reader = new ExcelPackage(file))
+                using (var source = reader.Workbook.Worksheets[name])
                 {
                     target.BeginLoadData();
-                    foreach (var sourceColumn in source.Columns.Cast<DataColumn>().Skip(sheetConfiguration.StartingPoint.X))
-                    {
-                        var sourceColumnName = source.Rows[0].ItemArray[sourceColumn.Ordinal].ToString();
-                        if (!target.Columns.Contains(sourceColumnName))
-                            target.Columns.Add(sourceColumnName);
-                    }
 
-                    foreach (var sourceRow in source.AsEnumerable().Skip(sheetConfiguration.StartingPoint.Y))
-                    {
-                        var newTargetRow = target.NewRow();
-                        newTargetRow.SetField(firstColumnName, file.Name);
-                        foreach (var sourceColumn in source.Columns.Cast<DataColumn>().Skip(sheetConfiguration.StartingPoint.X))
+                    var titleAndIndexList = Enumerable
+                        .Range(configuration.StartingPoint.Column, source.Dimension.Columns - configuration.StartingPoint.Column)
+                        .Select(columnIndex => (Title: source.Cells[1, columnIndex + 1].Text, Index: columnIndex))
+                        .ToArray();
+
+                    target.Columns.AddRange(
+                        titleAndIndexList
+                            .Where(titleAndIndex => !target.Columns.Contains(configuration.GetColumnName(titleAndIndex)))
+                            .Select(titleAndIndex => new DataColumn(configuration.GetColumnName(titleAndIndex)))
+                            .ToArray()
+                    );
+
+                    var rowsToAdd = Enumerable
+                        .Range(configuration.StartingPoint.Row, source.Dimension.Rows - configuration.StartingPoint.Row)
+                        .Select(rowIndex =>
                         {
-                            var sourceColumnName = source.Rows[0].ItemArray[sourceColumn.Ordinal].ToString();
-                            newTargetRow.SetField(sourceColumnName, sourceRow.ItemArray[sourceColumn.Ordinal]);
-                        }
+                            var newTargetRow = target.NewRow();
+                            newTargetRow.SetField(firstColumnName, file.Name);
+                            foreach (var titleAndIndex in titleAndIndexList)
+                                newTargetRow.SetField(configuration.GetColumnName(titleAndIndex), source.Cells[rowIndex + 1, titleAndIndex.Index + 1].Text);
+                            return newTargetRow;
+                        })
+                        .ToArray();
 
-                        target.Rows.Add(newTargetRow);
+                    foreach (var row in rowsToAdd)
+                    {
+                        target.Rows.Add(row);
                     }
 
                     target.EndLoadData();
@@ -107,7 +113,7 @@ namespace ExcelToCSVMerger
             (Name: dataTable.TableName,
                 Content: dataTable.AsEnumerable()
                     .Aggregate(
-                        new StringBuilder(string.Join(",", dataTable.Columns.Cast<DataColumn>().Select(column => $"\"{column.ColumnName}\""))+Environment.NewLine),
+                        new StringBuilder(string.Join(",", dataTable.Columns.Cast<DataColumn>().Select(column => $"\"{column.ColumnName}\"")) + Environment.NewLine),
                         (builder, row) =>
                         {
                             builder.AppendLine(string.Join(",", row.ItemArray.Select(item => $"\"{item}\"")));
@@ -119,10 +125,10 @@ namespace ExcelToCSVMerger
         {
             var sheetNamesList = new DirectoryInfo(pathToExcels)
                 .GetFiles("*.xlsx")
-                .SelectMany(ExtractSheet)
+                .SelectMany(ExtractWorksheetsFromFile)
                 .OrderBy(sheet => sheet.Name)
                 .GroupBy(sheet => sheet.Name)
-                .Select(sheets => $"[{sheets.First().Position} - {sheets.All(sheet => sheet.Position == sheets.First().Position)}] [{sheets.Key}]\n\t{string.Join("\n\t", sheets.Select(sheet => $"{sheet.FileName}, {sheet.NumberOfColumns}"))}")
+                .Select(sheets => $"[{sheets.First().Index} - {sheets.All(sheet => sheet.Index == sheets.First().Index)}] [{sheets.Key}]\n\t{string.Join("\n\t", sheets.Select(sheet => $"{sheet.Origin.FullName}, {sheet.NumberOfColumns}"))}")
                 .ToArray();
             foreach (var sheet in sheetNamesList)
             {
@@ -130,44 +136,43 @@ namespace ExcelToCSVMerger
             }
         }
 
-        private static IEnumerable<Sheet> ExtractSheet(FileInfo file)
+        private static IReadOnlyList<Worksheet> ExtractWorksheetsFromFile(FileInfo file)
         {
-            using (var stream = file.OpenRead())
-            using (var reader = ExcelReaderFactory.CreateReader(stream))
-            using (var dataSet = reader.AsDataSet())
-            {
-                for (int i = 0; i < dataSet.Tables.Count; i++)
-                {
-                    var dataTable = dataSet.Tables[i];
-                    yield return new Sheet(
-                        i,
-                        file.FullName,
-                        dataTable.TableName,
-                        dataTable.Columns.Count);
-                }
-            }
+            using (var excelFile = new ExcelPackage(file))
+                return excelFile.Workbook.Worksheets
+                    .Select(worksheet =>
+                        new Worksheet(worksheet.Index, file, worksheet.Name, worksheet.Dimension.Columns))
+                    .ToArray();
         }
     }
 
-    internal class SheetConfiguration
+    internal class WorksheetConfiguration
     {
-        public string SheetNameMatch { get; set; }
-        public (int X, int Y) StartingPoint { get; set; }
+        public string SheetNameMatch { get; }
+        public (int Column, int Row) StartingPoint { get; }
+        private ColumnUnivocity Univocity { get; }
+
+        public WorksheetConfiguration(string sheetNameMatch, (int Column, int Row) startingPoint, ColumnUnivocity univocity) =>
+            (SheetNameMatch, StartingPoint, Univocity) = (sheetNameMatch, startingPoint, univocity);
+
+        public string GetColumnName((string Title, int Index) titleAndIndex) =>
+            Univocity == ColumnUnivocity.Title ? titleAndIndex.Title : $"{titleAndIndex.Title} [{titleAndIndex.Index}]";
     }
 
-    class Sheet
+    internal enum ColumnUnivocity
     {
-        public int Position { get; }
-        public string FileName { get; }
+        Index,
+        Title
+    }
+
+    internal class Worksheet
+    {
+        public int Index { get; }
+        public FileInfo Origin { get; }
         public string Name { get; }
         public int NumberOfColumns { get; }
 
-        public Sheet(int position, string fileName, string name, int numberOfColumns)
-        {
-            Position = position;
-            FileName = fileName;
-            Name = name;
-            NumberOfColumns = numberOfColumns;
-        }
+        public Worksheet(int index, FileInfo origin, string name, int numberOfColumns) =>
+            (Index, Origin, Name, NumberOfColumns) = (index, origin, name, numberOfColumns);
     }
 }
