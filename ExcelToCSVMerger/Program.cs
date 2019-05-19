@@ -17,16 +17,16 @@ namespace ExcelToCSVMerger
 
             var configuration = new Configuration
             {
-                MergePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\trs-english\\posts\\",
+                MergePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\trs-english\\",
                 Worksheets = new[]
                 {
                     new WorksheetConfiguration(
-                        "Reach",
+                        "Key",
                         (0, 2),
                         ColumnUnivocity.Index
                     ),
                     new WorksheetConfiguration(
-                        "Actions On Post",
+                        "Daily",
                         (1, 1),
                         ColumnUnivocity.Title
                     )
@@ -84,6 +84,7 @@ namespace ExcelToCSVMerger
                         });
 
                     var columnsMapping = targetSheet.Cells[1, 1, 1, targetSheet.Dimension.Columns]
+                        .Where(header => sourceColumns.Any(tuple => configuration.GetColumnName(tuple) == header.Text))
                         .Select(header => (
                             SourceColumn: sourceColumns.Single(tuple => configuration.GetColumnName(tuple) == header.Text).Index,
                             TargetColumn: header.Start.Column))
