@@ -10,8 +10,6 @@ namespace ExcelToCSVMerger
 {
     class Program
     {
-        static HashSet<string> formats = new HashSet<string>();
-
         static void Main(string[] args)
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -58,8 +56,6 @@ namespace ExcelToCSVMerger
                 .Aggregate(new StringBuilder(), (builder, fileName) => builder.AppendLine($"Saved [{fileName}]"));
 
             Console.WriteLine(newFiles);
-
-            Console.WriteLine(string.Join(Environment.NewLine, formats));
         }
 
         private static DataTable MergeIntoDataTable(String name, WorksheetConfiguration configuration, FileInfo[] files)
@@ -113,7 +109,6 @@ namespace ExcelToCSVMerger
                                 }
 
                                 targetRow[configuration.GetColumnName(sourceColumn)] = sourceValue;
-                                formats.Add(sourceCell.Style.Numberformat.Format);
                                 return targetRow;
                             });
                         })
