@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using OfficeOpenXml;
+using OfficeOpenXml.FormulaParsing.Excel.Functions.RefAndLookup;
 
 namespace ExcelToCSVMerger
 {
@@ -60,10 +61,7 @@ namespace ExcelToCSVMerger
 
         private static DataTable MergeIntoDataTable(String name, WorksheetConfiguration configuration, FileInfo[] files)
         {
-            const string firstColumnName = "fileName";
-            var targetTable = new DataTable(name);
-            targetTable.Columns.Add(firstColumnName);
-            return files.Aggregate(targetTable, (newTable, file) =>
+            return files.Aggregate(new DataTable(name), (newTable, file) =>
             {
                 using (var reader = new ExcelPackage(file))
                 using (var source = reader.Workbook.Worksheets[name])
@@ -73,6 +71,7 @@ namespace ExcelToCSVMerger
                     var sourceColumns = Enumerable
                         .Range(configuration.StartingPoint.Column, source.Dimension.Columns - configuration.StartingPoint.Column)
                         .Select(columnIndex => (Title: source.Cells[1, columnIndex + 1].Text, Index: columnIndex))
+                        .Prepend((Title: "File Name", Index: -1))
                         .ToArray();
 
                     sourceColumns
@@ -88,10 +87,13 @@ namespace ExcelToCSVMerger
                         .Range(configuration.StartingPoint.Row, source.Dimension.Rows - configuration.StartingPoint.Row)
                         .Select(rowIndex =>
                         {
-                            var newTargetRow = newTable.NewRow();
-                            newTargetRow.SetField(firstColumnName, file.Name);
-                            return sourceColumns.Aggregate(newTargetRow, (targetRow, sourceColumn) =>
+                            return sourceColumns.Aggregate(newTable.NewRow(), (targetRow, sourceColumn) =>
                             {
+                                if (sourceColumn.Index == -1)
+                                {
+                                    targetRow[configuration.GetColumnName(sourceColumn)] = file.Name;
+                                    return targetRow;
+                                }
                                 
                                 var sourceCell = source.Cells[rowIndex + 1, sourceColumn.Index + 1];
                                 object sourceValue;
@@ -167,7 +169,7 @@ namespace ExcelToCSVMerger
             (SheetNameMatch, StartingPoint, Univocity) = (sheetNameMatch, startingPoint, univocity);
 
         public string GetColumnName((string Title, int Index) titleAndIndex) =>
-            Univocity == ColumnUnivocity.Title ? titleAndIndex.Title : $"{titleAndIndex.Title} [{titleAndIndex.Index}]";
+            titleAndIndex.Index == -1 || Univocity == ColumnUnivocity.Title ? titleAndIndex.Title : $"{titleAndIndex.Title} [{titleAndIndex.Index}]";
     }
 
     internal enum ColumnUnivocity
