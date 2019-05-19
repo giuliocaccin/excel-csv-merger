@@ -15,48 +15,47 @@ namespace ExcelToCSVMerger
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-            var pathToExcels = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\trs-english\\posts\\";
+            var configuration = new Configuration
+            {
+                MergePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\trs-english\\posts\\",
+                Worksheets = new[]
+                {
+                    new WorksheetConfiguration(
+                        "Reach",
+                        (0, 2),
+                        ColumnUnivocity.Index
+                    ),
+                    new WorksheetConfiguration(
+                        "Actions On Post",
+                        (1, 1),
+                        ColumnUnivocity.Title
+                    )
+                }
+            };
 
-            Console.WriteLine(SheetAnalysis(pathToExcels));
+            Console.WriteLine(SheetAnalysis(configuration));
 
-            FileMerger(pathToExcels);
+            Console.WriteLine(FileMerger(configuration));
 
             Console.WriteLine("end");
             Console.ReadLine();
         }
 
-        private static void FileMerger(string pathToExcels)
+        private static string FileMerger(Configuration configuration)
         {
-            var sheetConfiguration = new[]
-            {
-                new WorksheetConfiguration(
-                    "Reach",
-                    (0, 2),
-                    ColumnUnivocity.Index
-                ),
-                new WorksheetConfiguration(
-                    "Actions On Post",
-                    (1, 1),
-                    ColumnUnivocity.Title
-                )
-            };
-
-            var validWorksheetNames = sheetConfiguration.Select(configuration => configuration.SheetNameMatch).ToArray();
-
-            var newFiles = new DirectoryInfo(pathToExcels)
+            return new DirectoryInfo(configuration.MergePath)
                 .GetFiles("*.xlsx")
                 .SelectMany(ExtractWorksheetsFromFile)
-                .Where(sheet => validWorksheetNames.Any(name => sheet.Name.Contains(name, StringComparison.OrdinalIgnoreCase)))
+                .Where(sheet => configuration.Worksheets.Any(worksheet => sheet.Name.Contains(worksheet.SheetNameMatch, StringComparison.OrdinalIgnoreCase)))
                 .GroupBy(sheet => sheet.Name)
                 .Select(grouping => (
                     Name: grouping.Key,
-                    Configuration: sheetConfiguration.Single(configuration => grouping.Key.Contains(configuration.SheetNameMatch)),
+                    Configuration: configuration.Worksheets.Single(worksheet => grouping.Key.Contains(worksheet.SheetNameMatch)),
                     Files: grouping.Select(sheet => sheet.Origin).ToArray()))
                 .Select(tuple => MergeIntoExcelPackage(tuple.Name, tuple.Configuration, tuple.Files))
-                .Select(table => SaveFile(pathToExcels, table))
-                .Aggregate(new StringBuilder(), (builder, fileName) => builder.AppendLine($"Saved [{fileName}]"));
-
-            Console.WriteLine(newFiles);
+                .Select(table => SaveFile(configuration.MergePath, table))
+                .Aggregate(new StringBuilder(), (builder, fileName) => builder.AppendLine($"Saved [{fileName}]"))
+                .ToString();
         }
 
         private static ExcelPackage MergeIntoExcelPackage(String name, WorksheetConfiguration configuration, FileInfo[] files)
@@ -86,14 +85,14 @@ namespace ExcelToCSVMerger
 
                     var columnsMapping = targetSheet.Cells[1, 1, 1, targetSheet.Dimension.Columns]
                         .Select(header => (
-                            SourceColumn: sourceColumns.Single(tuple => configuration.GetColumnName(tuple) == header.Text).Index, 
+                            SourceColumn: sourceColumns.Single(tuple => configuration.GetColumnName(tuple) == header.Text).Index,
                             TargetColumn: header.Start.Column))
                         .ToArray();
 
                     Enumerable
                         .Range(configuration.StartingPoint.Row, source.Dimension.Rows - configuration.StartingPoint.Row)
                         .Zip(Enumerable.Range(targetSheet.Dimension.Rows + 1, source.Dimension.Rows - configuration.StartingPoint.Row), (sourceRow, targetRow) => (
-                            SourceRow: sourceRow, 
+                            SourceRow: sourceRow,
                             TargetRow: targetRow))
                         .Select(rowMap =>
                         {
@@ -127,11 +126,12 @@ namespace ExcelToCSVMerger
             return fileInfo.FullName;
         }
 
-        private static string SheetAnalysis(string pathToExcels)
+        private static string SheetAnalysis(Configuration configuration)
         {
-            return new DirectoryInfo(pathToExcels)
+            return new DirectoryInfo(configuration.MergePath)
                 .GetFiles("*.xlsx")
                 .SelectMany(ExtractWorksheetsFromFile)
+                .Where(sheet => configuration.Worksheets.Any(worksheet => sheet.Name.Contains(worksheet.SheetNameMatch, StringComparison.OrdinalIgnoreCase)))
                 .OrderBy(sheet => sheet.Name)
                 .GroupBy(sheet => sheet.Name)
                 .Select(sheets => $"[{sheets.First().Index} - {sheets.All(sheet => sheet.Index == sheets.First().Index)}] [{sheets.Key}]\n\t{string.Join("\n\t", sheets.Select(sheet => $"{sheet.Origin.FullName}, {sheet.NumberOfColumns}"))}")
@@ -147,6 +147,12 @@ namespace ExcelToCSVMerger
                         new Worksheet(worksheet.Index, file, worksheet.Name, worksheet.Dimension.Columns))
                     .ToArray();
         }
+    }
+
+    internal class Configuration
+    {
+        public string MergePath { get; set; }
+        public WorksheetConfiguration[] Worksheets { get; set; }
     }
 
     internal class WorksheetConfiguration
