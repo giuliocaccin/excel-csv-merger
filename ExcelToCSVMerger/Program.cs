@@ -18,7 +18,7 @@ namespace ExcelToCSVMerger
 
             var pathToExcels = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\trs-english\\posts\\";
 
-            //SheetAnalysis(pathToExcels);
+            Console.WriteLine(SheetAnalysis(pathToExcels));
 
             FileMerger(pathToExcels);
 
@@ -54,11 +54,10 @@ namespace ExcelToCSVMerger
                     Configuration: sheetConfiguration.Single(configuration => grouping.Key.Contains(configuration.SheetNameMatch)),
                     Files: grouping.Select(sheet => sheet.Origin).ToArray()))
                 .Select(tuple => MergeIntoDataTable(tuple.Name, tuple.Configuration, tuple.Files))
-                .Select(table => DataTableToCsv(pathToExcels, table))
-                .ToArray();
+                .Select(table => SaveDataTable(pathToExcels, table))
+                .Aggregate(new StringBuilder(), (builder, fileName) => builder.AppendLine($"Saved [{fileName}]"));
 
-            foreach (var fileName in newFiles)
-                Console.WriteLine($"Saved [{fileName}]");
+            Console.WriteLine(newFiles);
 
             Console.WriteLine(string.Join(Environment.NewLine, formats));
         }
@@ -66,71 +65,71 @@ namespace ExcelToCSVMerger
         private static DataTable MergeIntoDataTable(String name, WorksheetConfiguration configuration, FileInfo[] files)
         {
             const string firstColumnName = "fileName";
-            var target = new DataTable(name);
-            target.Columns.Add(firstColumnName);
-            foreach (var file in files)
+            var targetTable = new DataTable(name);
+            targetTable.Columns.Add(firstColumnName);
+            return files.Aggregate(targetTable, (newTable, file) =>
             {
                 using (var reader = new ExcelPackage(file))
                 using (var source = reader.Workbook.Worksheets[name])
                 {
-                    target.BeginLoadData();
+                    newTable.BeginLoadData();
 
-                    var titleAndIndexList = Enumerable
+                    var sourceColumns = Enumerable
                         .Range(configuration.StartingPoint.Column, source.Dimension.Columns - configuration.StartingPoint.Column)
                         .Select(columnIndex => (Title: source.Cells[1, columnIndex + 1].Text, Index: columnIndex))
                         .ToArray();
 
-                    target.Columns.AddRange(
-                        titleAndIndexList
-                            .Where(titleAndIndex => !target.Columns.Contains(configuration.GetColumnName(titleAndIndex)))
-                            .Select(titleAndIndex => new DataColumn(configuration.GetColumnName(titleAndIndex)))
-                            .ToArray()
-                    );
+                    sourceColumns
+                        .Where(sourceColumn => !newTable.Columns.Contains(configuration.GetColumnName(sourceColumn)))
+                        .Select(columnToAdd => new DataColumn(configuration.GetColumnName(columnToAdd)))
+                        .Aggregate(newTable.Columns, (targetColumns, newColumn) =>
+                        {
+                            targetColumns.Add(newColumn);
+                            return targetColumns;
+                        });
 
-                    var rowsToAdd = Enumerable
+                    Enumerable
                         .Range(configuration.StartingPoint.Row, source.Dimension.Rows - configuration.StartingPoint.Row)
                         .Select(rowIndex =>
                         {
-                            var newTargetRow = target.NewRow();
+                            var newTargetRow = newTable.NewRow();
                             newTargetRow.SetField(firstColumnName, file.Name);
-                            foreach (var titleAndIndex in titleAndIndexList)
+                            return sourceColumns.Aggregate(newTargetRow, (targetRow, sourceColumn) =>
                             {
-                                var sourceCell = source.Cells[rowIndex + 1, titleAndIndex.Index + 1];
-                                object finalValue;
+                                
+                                var sourceCell = source.Cells[rowIndex + 1, sourceColumn.Index + 1];
+                                object sourceValue;
                                 switch (sourceCell.Style.Numberformat.Format)
                                 {
                                     case "General":
-                                        finalValue = sourceCell.Text;
+                                        sourceValue = sourceCell.Text;
                                         break;
                                     case "0":
-                                        finalValue = Convert.ToInt32(sourceCell.Value);
+                                        sourceValue = Convert.ToInt32(sourceCell.Value);
                                         break;
                                     default:
-                                        finalValue = DateTime.FromOADate((double)sourceCell.Value);
+                                        sourceValue = DateTime.FromOADate((double) sourceCell.Value);
                                         break;
                                 }
 
-                                newTargetRow[configuration.GetColumnName(titleAndIndex)] = finalValue;
+                                targetRow[configuration.GetColumnName(sourceColumn)] = sourceValue;
                                 formats.Add(sourceCell.Style.Numberformat.Format);
-                            }
-
-                            return newTargetRow;
+                                return targetRow;
+                            });
                         })
-                        .ToArray();
+                        .Aggregate(newTable.Rows, (targetRows, newRow) =>
+                        {
+                            targetRows.Add(newRow);
+                            return targetRows;
+                        });
 
-                    foreach (var row in rowsToAdd)
-                    {
-                        target.Rows.Add(row);
-                    }
-
-                    target.EndLoadData();
+                    newTable.EndLoadData();
                 }
-            }
-
-            return target;
+                return newTable;
+            });
         }
 
-        private static string DataTableToCsv(string savePath, DataTable dataTable)
+        private static string SaveDataTable(string savePath, DataTable dataTable)
         {
             using (var excelPackage = new ExcelPackage(new FileInfo(Path.Combine(savePath, dataTable.TableName + ".xlsx"))))
             using (var excelWorksheet = excelPackage.Workbook.Worksheets.Add(dataTable.TableName))
@@ -141,19 +140,16 @@ namespace ExcelToCSVMerger
             }
         }
 
-        private static void SheetAnalysis(string pathToExcels)
+        private static string SheetAnalysis(string pathToExcels)
         {
-            var sheetNamesList = new DirectoryInfo(pathToExcels)
+            return new DirectoryInfo(pathToExcels)
                 .GetFiles("*.xlsx")
                 .SelectMany(ExtractWorksheetsFromFile)
                 .OrderBy(sheet => sheet.Name)
                 .GroupBy(sheet => sheet.Name)
                 .Select(sheets => $"[{sheets.First().Index} - {sheets.All(sheet => sheet.Index == sheets.First().Index)}] [{sheets.Key}]\n\t{string.Join("\n\t", sheets.Select(sheet => $"{sheet.Origin.FullName}, {sheet.NumberOfColumns}"))}")
-                .ToArray();
-            foreach (var sheet in sheetNamesList)
-            {
-                Console.WriteLine(sheet);
-            }
+                .Aggregate(new StringBuilder(), (builder, line) => builder.AppendLine(line))
+                .ToString();
         }
 
         private static IReadOnlyList<Worksheet> ExtractWorksheetsFromFile(FileInfo file)
