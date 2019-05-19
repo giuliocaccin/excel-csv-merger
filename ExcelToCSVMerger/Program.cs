@@ -52,22 +52,21 @@ namespace ExcelToCSVMerger
                     Name: grouping.Key,
                     Configuration: sheetConfiguration.Single(configuration => grouping.Key.Contains(configuration.SheetNameMatch)),
                     Files: grouping.Select(sheet => sheet.Origin).ToArray()))
-                .Select(tuple => MergeIntoDataTable(tuple.Name, tuple.Configuration, tuple.Files))
-                .Select(table => SaveDataTable(pathToExcels, table))
+                .Select(tuple => MergeIntoExcelPackage(tuple.Name, tuple.Configuration, tuple.Files))
+                .Select(table => SaveFile(pathToExcels, table))
                 .Aggregate(new StringBuilder(), (builder, fileName) => builder.AppendLine($"Saved [{fileName}]"));
 
             Console.WriteLine(newFiles);
         }
 
-        private static DataTable MergeIntoDataTable(String name, WorksheetConfiguration configuration, FileInfo[] files)
+        private static ExcelPackage MergeIntoExcelPackage(String name, WorksheetConfiguration configuration, FileInfo[] files)
         {
-            return files.Aggregate(new DataTable(name), (newTable, file) =>
+            var excelPackage = new ExcelPackage();
+            files.Aggregate(excelPackage.Workbook.Worksheets.Add(name), (targetSheet, file) =>
             {
                 using (var reader = new ExcelPackage(file))
                 using (var source = reader.Workbook.Worksheets[name])
                 {
-                    newTable.BeginLoadData();
-
                     var sourceColumns = Enumerable
                         .Range(configuration.StartingPoint.Column, source.Dimension.Columns - configuration.StartingPoint.Column)
                         .Select(columnIndex => (Title: source.Cells[1, columnIndex + 1].Text, Index: columnIndex))
@@ -75,66 +74,57 @@ namespace ExcelToCSVMerger
                         .ToArray();
 
                     sourceColumns
-                        .Where(sourceColumn => !newTable.Columns.Contains(configuration.GetColumnName(sourceColumn)))
-                        .Select(columnToAdd => new DataColumn(configuration.GetColumnName(columnToAdd)))
-                        .Aggregate(newTable.Columns, (targetColumns, newColumn) =>
+                        .Select(configuration.GetColumnName)
+                        .Where(columnName => !targetSheet.Cells[1, 1, 1, targetSheet.Dimension?.Columns ?? 1].Any(cell => string.Equals(cell.Text, columnName, StringComparison.OrdinalIgnoreCase)))
+                        .Aggregate(targetSheet, (sheet, newColumnName) =>
                         {
-                            targetColumns.Add(newColumn);
-                            return targetColumns;
+                            var newColumnIndex = (sheet.Dimension?.Columns ?? 0) + 1;
+                            sheet.InsertColumn(newColumnIndex, 1);
+                            sheet.Cells[1, newColumnIndex].Value = newColumnName;
+                            return sheet;
                         });
+
+                    var columnsMapping = targetSheet.Cells[1, 1, 1, targetSheet.Dimension.Columns]
+                        .Select(header => (
+                            SourceColumn: sourceColumns.Single(tuple => configuration.GetColumnName(tuple) == header.Text).Index, 
+                            TargetColumn: header.Start.Column))
+                        .ToArray();
 
                     Enumerable
                         .Range(configuration.StartingPoint.Row, source.Dimension.Rows - configuration.StartingPoint.Row)
-                        .Select(rowIndex =>
+                        .Zip(Enumerable.Range(targetSheet.Dimension.Rows + 1, source.Dimension.Rows - configuration.StartingPoint.Row), (sourceRow, targetRow) => (
+                            SourceRow: sourceRow, 
+                            TargetRow: targetRow))
+                        .Select(rowMap =>
                         {
-                            return sourceColumns.Aggregate(newTable.NewRow(), (targetRow, sourceColumn) =>
-                            {
-                                if (sourceColumn.Index == -1)
+                            return columnsMapping
+                                .Aggregate(targetSheet, (sheet, colMap) =>
                                 {
-                                    targetRow[configuration.GetColumnName(sourceColumn)] = file.Name;
-                                    return targetRow;
-                                }
-                                
-                                var sourceCell = source.Cells[rowIndex + 1, sourceColumn.Index + 1];
-                                object sourceValue;
-                                switch (sourceCell.Style.Numberformat.Format)
-                                {
-                                    case "General":
-                                        sourceValue = sourceCell.Text;
-                                        break;
-                                    case "0":
-                                        sourceValue = Convert.ToInt32(sourceCell.Value);
-                                        break;
-                                    default:
-                                        sourceValue = DateTime.FromOADate((double) sourceCell.Value);
-                                        break;
-                                }
+                                    if (colMap.SourceColumn == -1)
+                                    {
+                                        sheet.Cells[rowMap.TargetRow, colMap.TargetColumn].Value = file.Name;
+                                        return sheet;
+                                    }
 
-                                targetRow[configuration.GetColumnName(sourceColumn)] = sourceValue;
-                                return targetRow;
-                            });
+                                    source.Cells[rowMap.SourceRow + 1, colMap.SourceColumn + 1].Copy(sheet.Cells[rowMap.TargetRow, colMap.TargetColumn]);
+                                    return sheet;
+                                });
                         })
-                        .Aggregate(newTable.Rows, (targetRows, newRow) =>
-                        {
-                            targetRows.Add(newRow);
-                            return targetRows;
-                        });
-
-                    newTable.EndLoadData();
+                        .ToArray();
                 }
-                return newTable;
+
+                return targetSheet;
             });
+
+            return excelPackage;
         }
 
-        private static string SaveDataTable(string savePath, DataTable dataTable)
+        private static string SaveFile(string savePath, ExcelPackage excelPackage)
         {
-            using (var excelPackage = new ExcelPackage(new FileInfo(Path.Combine(savePath, dataTable.TableName + ".xlsx"))))
-            using (var excelWorksheet = excelPackage.Workbook.Worksheets.Add(dataTable.TableName))
-            {
-                excelWorksheet.Cells.LoadFromDataTable(dataTable, true);
-                excelPackage.Save();
-                return excelPackage.File.FullName;
-            }
+            var fileInfo = new FileInfo(Path.Combine(savePath, excelPackage.Workbook.Worksheets.First().Name + ".xlsx"));
+            excelPackage.SaveAs(fileInfo);
+            excelPackage.Dispose();
+            return fileInfo.FullName;
         }
 
         private static string SheetAnalysis(string pathToExcels)
